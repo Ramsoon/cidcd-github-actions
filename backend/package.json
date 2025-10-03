@@ -1,0 +1,13 @@
+{
+  "scripts": {
+    "test": "jest --verbose",
+    "test:watch": "jest --watch",
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "devDependencies": {
+    "jest": "^29.6.1",
+    "supertest": "^6.3.3",
+    "eslint": "^8.45.0"
+  }
+}

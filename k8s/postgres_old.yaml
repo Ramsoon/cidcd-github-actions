@@ -1,0 +1,148 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: nimc-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: nimc-config
+              key: db-name
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: nimc-config
+              key: db-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: postgres-password
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: init-script
+          mountPath: /docker-entrypoint-initdb.d
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - exec pg_isready -U postgres -d nimc_db
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - exec pg_isready -U postgres -d nimc_db
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      - name: init-script
+        configMap:
+          name: postgres-init
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: nimc-production
+data:
+  init.sql: |
+    -- Initialize NIMC Database
+    CREATE TABLE IF NOT EXISTS citizens (
+        id SERIAL PRIMARY KEY,
+        nin VARCHAR(11) UNIQUE NOT NULL,
+        first_name VARCHAR(100) NOT NULL,
+        last_name VARCHAR(100) NOT NULL,
+        email VARCHAR(150) UNIQUE,
+        phone VARCHAR(15),
+        date_of_birth DATE NOT NULL,
+        state_of_origin VARCHAR(100),
+        lga VARCHAR(100),
+        address TEXT,
+        occupation VARCHAR(100),
+        gender VARCHAR(10) CHECK (gender IN ('Male', 'Female', 'Other')),
+        marital_status VARCHAR(20),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        role VARCHAR(20) DEFAULT 'officer',
+        full_name VARCHAR(100) NOT NULL,
+        email VARCHAR(150) UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Insert default admin user (password: admin123)
+    INSERT INTO users (username, password_hash, role, full_name, email) 
+    VALUES (
+        'admin', 
+        '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi',
+        'admin', 
+        'System Administrator', 
+        'admin@nimc.gov.ng'
+    ) ON CONFLICT (username) DO NOTHING;
+
+    -- Insert sample data
+    INSERT INTO citizens (nin, first_name, last_name, email, phone, date_of_birth, state_of_origin, lga, address, occupation, gender, marital_status) 
+    VALUES 
+    ('12345678901', 'Adebola', 'Johnson', 'adebola.johnson@email.com', '08012345678', '1985-05-15', 'Lagos', 'Ikeja', '123 Main Street, Ikeja', 'Software Engineer', 'Male', 'Married'),
+    ('12345678902', 'Chiamaka', 'Okoro', 'chiamaka.okoro@email.com', '08023456789', '1990-08-22', 'Abia', 'Umuahia', '456 Oak Avenue, Umuahia', 'Teacher', 'Female', 'Single');
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: nimc-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: nimc-production
+spec:
+  selector:
+    app: postgres
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nimc-production
+  labels:
+    name: nimc-production
+    environment: production

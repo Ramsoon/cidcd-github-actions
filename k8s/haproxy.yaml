@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haproxy
+  namespace: nimc-production
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: haproxy
+  template:
+    metadata:
+      labels:
+        app: haproxy
+    spec:
+      containers:
+      - name: haproxy
+        image: haproxy:2.8-alpine
+        ports:
+        - containerPort: 80
+        - containerPort: 8404  # Stats port
+        volumeMounts:
+        - name: haproxy-config
+          mountPath: /usr/local/etc/haproxy/haproxy.cfg
+          subPath: haproxy.cfg
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /haproxy?stats
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /haproxy?stats
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: haproxy-config
+        configMap:
+          name: haproxy-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haproxy-config
+  namespace: nimc-production
+data:
+  haproxy.cfg: |
+    global
+        daemon
+        maxconn 4000
+        log 127.0.0.1 local0 info
+
+    defaults
+        mode http
+        timeout connect 5000ms
+        timeout client 50000ms
+        timeout server 50000ms
+        option forwardfor
+        option httplog
+        log global
+
+    frontend http_front
+        bind *:80
+        stats uri /haproxy?stats
+        stats refresh 30s
+        stats auth admin:admin123
+        
+        acl is_api path_beg /api
+        use_backend api_back if is_api
+        
+        default_backend http_back
+
+    backend http_back
+        balance roundrobin
+        option httpchk GET / HTTP/1.1\r\nHost:localhost
+        server frontend1 frontend-service:80 check inter 10s fall 3 rise 2
+        server frontend2 frontend-service:80 check inter 10s fall 3 rise 2
+        server frontend3 frontend-service:80 check inter 10s fall 3 rise 2
+
+    backend api_back
+        balance roundrobin
+        option httpchk GET /api/health HTTP/1.1\r\nHost:localhost
+        server backend1 backend-service:5000 check inter 10s fall 3 rise 2
+        server backend2 backend-service:5000 check inter 10s fall 3 rise 2
+        server backend3 backend-service:5000 check inter 10s fall 3 rise 2
+
+    listen stats
+        bind *:8404
+        stats enable
+        stats uri /stats
+        stats refresh 30s
+        stats auth admin:admin123
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: haproxy-service
+  namespace: nimc-production
+spec:
+  selector:
+    app: haproxy
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 80
+      nodePort: 30009
+    - name: stats
+      protocol: TCP
+      port: 8404
+      targetPort: 8404
+  type: NodePort
